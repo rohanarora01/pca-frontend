@@ -1,0 +1,440 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "process-adherence-upload",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-5216, 3168],
+      "id": "b41b85a9-f5eb-44dd-af84-6368be5fff39",
+      "name": "Webhook: Upload Files3",
+      "webhookId": "c0da6885-dd3b-4cca-9c28-94e5e6dcfb45",
+      "notes": "Accepts multipart/form-data POST with fields: table_a (file), table_b (file), definition_mode (string: AI or Manual), standard_flow (string, optional), critical_steps (string, optional)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\n\nreturn [{\n  json: {\n    definition_mode: item.json.body?.definition_mode || \"AI\"\n  },\n  binary: {\n    table_a: item.binary.table_a,\n    table_b: item.binary.table_b\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-5040, 3168],
+      "id": "bfab2a60-aa94-4ed9-b300-3fc53827c7b2",
+      "name": "Extract Uploaded Files3"
+    },
+    {
+      "parameters": {
+        "binaryPropertyName": "table_a",
+        "fileFormat": "csv",
+        "options": {
+          "delimiter": ",",
+          "relaxQuotes": true,
+          "skipRecordsWithErrors": {
+            "value": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.spreadsheetFile",
+      "typeVersion": 2,
+      "position": [-4816, 3056],
+      "id": "7aab7bbb-f777-4002-af2a-b5f34b6f1212",
+      "name": "Parse Table A (Excel/CSV)3"
+    },
+    {
+      "parameters": {
+        "binaryPropertyName": "table_b",
+        "fileFormat": "csv",
+        "options": {
+          "delimiter": ",",
+          "relaxQuotes": true,
+          "skipRecordsWithErrors": {
+            "value": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.spreadsheetFile",
+      "typeVersion": 2,
+      "position": [-4816, 3248],
+      "id": "75afa3de-8934-4544-89b3-e680daedf09e",
+      "name": "Parse Table B (Excel/CSV)3"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [-4512, 3168],
+      "id": "60ea642b-1e40-4938-ab2d-a4250e642d44",
+      "name": "Merge Table A + B3"
+    },
+    {
+      "parameters": {
+        "jsCode": "const grouped = {};\n\nfor (const row of $input.all().map(i => i.json)) {\n  const order =\n    row[\"Case Key\"] ||\n    row.Ebeln ||\n    row.Order_Number ||\n    row[\"Purchase Order\"];\n\n  if (!order) continue;\n  if (!grouped[order]) grouped[order] = [];\n  grouped[order].push(row);\n}\n\nreturn Object.entries(grouped).map(([order, acts]) => ({\n  json: { Order_Number: order, activities: acts }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-4304, 3168],
+      "id": "c3438d7f-bd4e-4d77-a822-40156d0d03a9",
+      "name": "Group by Order1"
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => {\n\n  const acts = item.json.activities;\n\n  const sorted = [...acts].sort(\n    (a,b) => new Date(a.Eventtime) - new Date(b.Eventtime)\n  );\n\n  const flow = [];\n\n  for (const a of sorted) {\n\n    const name =\n      (a[\"Activity En\"] ||\n       a[\"Activity De\"] ||\n       \"\").toLowerCase().trim();\n\n    if (name) flow.push(name);\n\n  }\n\n  return {\n    json: {\n      ...item.json,\n      Actual_Flow: flow\n    }\n  };\n\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-4096, 3168],
+      "id": "279c6e5c-1779-4d48-828f-e900fc7f4da2",
+      "name": "Build Actual Flow1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const allOrders = $input.all().map(i => i.json);\n\nconst actCounts = {};\nallOrders.forEach(o => {\n  const uniqueActs = [...new Set(o.Actual_Flow || [])];\n  uniqueActs.forEach(a => { actCounts[a] = (actCounts[a] || 0) + 1; });\n});\n\nconst activities = Object.entries(actCounts)\n  .sort((a, b) => b[1] - a[1])\n  .map(([act]) => act)\n  .slice(0, 30);\n\nreturn [{ json: { activities, total_orders: allOrders.length, all_so_data: allOrders } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-3920, 3168],
+      "id": "b905d5d3-a196-458d-b4e3-af8b3df7f906",
+      "name": "Cleaning2"
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "model": "=llama-3.1-8b-instant",
+        "prompt": {
+          "messages": [
+            {
+              "content": "=You are an SAP Procure-to-Pay (P2P) process mining expert.\n\nActivities observed in this event log (sorted by frequency):\n{{ $json.activities.join(\", \") }}\n\nTotal orders: {{ $json.total_orders }}\n\nNOTE: Many orders in SAP are incomplete stubs (only creation was logged). \nDefine the IDEAL standard P2P flow that COMPLETE orders should follow.\n\nA standard SAP P2P process typically includes:\n1. Create Purchase Order Item (mandatory)\n2. Send Purchase Order (mandatory)  \n3. Record Goods Receipt OR Record Service Entry Sheet (mandatory)\n4. Record Invoice Receipt (mandatory)\n5. Clear Invoice (mandatory)\n\nUse ONLY activity names from the list above. Do not invent names.\n\nReturn JSON ONLY:\n{\n  \"standard_flow\": [\"step1\", \"step2\", \"step3\", \"step4\", \"step5\"],\n  \"critical_steps\": [\"step that is absolutely mandatory - must be present in every complete order\"]\n}\n\nCritical steps = steps whose absence means the order is non-compliant.\nChoose 2-3 activities that represent mandatory milestones."
+            }
+          ]
+        },
+        "options": {},
+        "requestOptions": {}
+      },
+      "name": "AI Defines Standard3",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [-3680, 3168],
+      "id": "57c0a16a-c52a-43cd-a730-13a88598c084",
+      "credentials": {
+        "openAiApi": {
+          "id": "XbfHsgBY2mYnFIF6",
+          "name": "Groq"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\n\nlet msg = \"\";\n\n// Extract AI response\nif (item.json.message?.content) {\n  msg = item.json.message.content;\n} else if (item.json.choices?.[0]?.message?.content) {\n  msg = item.json.choices[0].message.content;\n} else if (typeof item.json === \"string\") {\n  msg = item.json;\n}\n\nif (!msg) throw new Error(\"AI response missing\");\n\n// Extract JSON block\nconst jsonMatch = msg.match(/\\{[\\s\\S]*\\}/);\nif (!jsonMatch) throw new Error(\"No JSON found in AI response\");\n\nlet jsonString = jsonMatch[0]\n  .replace(/\\/\\/.*$/gm, \"\")\n  .replace(/,\\s*}/g, \"}\")\n  .replace(/,\\s*]/g, \"]\")\n  .replace(/}\\s*{/g, \"},{\")\n  .replace(/'/g, '\"')\n  .replace(/\\n/g, \" \")\n  .replace(/approve purchase order[^\"]*/g, \"approve purchase order\");\n\nlet parsed;\n\ntry {\n  parsed = JSON.parse(jsonString);\n} catch (e) {\n  console.log(\"RAW AI OUTPUT:\", msg);\n  throw new Error(\"AI JSON parsing failed: \" + e.message);\n}\n\n\n// Normalization helper\nconst normalize = (arr) => {\n  if (!Array.isArray(arr)) return [];\n  return arr\n    .map(v => {\n      let value = \"\";\n\n      if (typeof v === \"string\") value = v;\n\n      else if (typeof v === \"object\" && v !== null) {\n        value = v.activity || v.name || Object.values(v)[0] || \"\";\n      }\n\n      else value = String(v);\n\n      return value.toLowerCase().trim();\n    })\n    .filter(Boolean);\n};\n\n\n// Load real orders\nconst orders = $items(\"Cleaning2\")[0].json.all_so_data;\n\n\n// Detect available steps from data\nconst availableSteps = new Set(\n  orders.flatMap(o => o.Actual_Flow || [])\n);\n\n\n// Filter AI hallucinations\nconst standard = normalize(parsed.standard_flow || [])\n  .filter(s => availableSteps.has(s));\n\nconst critical = normalize(parsed.critical_steps || [])\n  .filter(s => availableSteps.has(s));\n\n\n// Attach to every order\nreturn orders.map(o => ({\n  json: {\n    ...o,\n    Standard_Flow: standard,\n    Critical_Steps: critical\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-3440, 3168],
+      "id": "7386ba8b-2a11-473b-8193-227460e7a32d",
+      "name": "Parse AI Standard3"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// FIXED Deviation Engine\n// Uses AI-defined Standard_Flow + Critical_Steps instead of hardcoded names.\n// Fuzzy matching handles variant activity name spellings.\n// ─────────────────────────────────────────────────────────────────────────────\nconst items = $input.all();\n\nreturn items.map(item => {\n  const order        = item.json;\n  const standardFlow = order.Standard_Flow  || [];\n  const actualFlow   = order.Actual_Flow    || [];\n  const criticalSteps = order.Critical_Steps || [];\n  const deviations   = [];\n  let blocked = false, blockReason = '', blockStep = '';\n\n  // Skip stub orders with fewer than 2 activities — nothing meaningful to check\n  if (actualFlow.length < 2) {\n    return {\n      json: {\n        ...order,\n        Deviations_Array:  [],\n        Deviation_Count:   0,\n        Deviation_Types:   'None',\n        Deviation_Counts:  { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },\n        Risk_Score:        0,\n        Risk_Level:        'LOW',\n        Process_Status:    'PASS',\n        Status_Label:      'Compliant',\n        Blocked:           false,\n        Block_Reason:      '',\n        Block_Step:        '',\n        Total_Deviations:  0\n      }\n    };\n  }\n\n  // ── 1. Missing critical steps (CRITICAL severity → BLOCKED) ──────────────\n  for (const step of criticalSteps) {\n    if (!actualFlow.includes(step)) {\n      deviations.push({\n        Type:        'MISSING_CRITICAL_STEP',\n        step:        step,\n        severity:    'CRITICAL',\n        detected_at: 'END_OF_PROCESS',\n        position:    standardFlow.indexOf(step) + 1 || 0\n      });\n      if (!blocked) {\n        blocked     = true;\n        blockReason = `Critical step not completed: ${step}`;\n        blockStep   = step;\n      }\n    }\n  }\n\n  // ── 2. PO / item deletion (fuzzy match on actual step names) ─────────────\n  const deleteStep = actualFlow.find(s =>\n    s.includes('delet') &&\n    (s.includes('order') || s.includes('item') || s.includes('po') || s.includes('purchas'))\n  );\n  if (deleteStep && !deviations.find(d => d.step === deleteStep)) {\n    deviations.push({\n      Type:        'PO_DELETED',\n      step:        deleteStep,\n      severity:    'HIGH',\n      detected_at: deleteStep,\n      position:    actualFlow.indexOf(deleteStep) + 1\n    });\n    if (!blocked) {\n      blocked     = true;\n      blockReason = 'Purchase order item was deleted';\n      blockStep   = deleteStep;\n    }\n  }\n\n  // ── 3. Value / quantity / price changes ──────────────────────────────────\n  const changeStep = actualFlow.find(s =>\n    (s.includes('change') || s.includes('modif') || s.includes('updat') || s.includes('revis')) &&\n    (s.includes('qty') || s.includes('quant') || s.includes('price') ||\n     s.includes('amount') || s.includes('value') || s.includes('cost'))\n  );\n  if (changeStep && !deviations.find(d => d.step === changeStep)) {\n    deviations.push({\n      Type:        'VALUE_CHANGE',\n      step:        changeStep,\n      severity:    'MEDIUM',\n      detected_at: changeStep,\n      position:    actualFlow.indexOf(changeStep) + 1\n    });\n  }\n\n  // ── 4. Steps executed out of order vs. standard flow ─────────────────────\n  const actualInStandard = actualFlow.filter(s => standardFlow.includes(s));\n  for (let i = 0; i < actualInStandard.length - 1; i++) {\n    const idxA = standardFlow.indexOf(actualInStandard[i]);\n    const idxB = standardFlow.indexOf(actualInStandard[i + 1]);\n    if (idxA !== -1 && idxB !== -1 && idxA > idxB) {\n      const outStep = actualInStandard[i + 1];\n      if (!deviations.find(d => d.Type === 'OUT_OF_ORDER' && d.step === outStep)) {\n        deviations.push({\n          Type:        'OUT_OF_ORDER',\n          step:        outStep,\n          severity:    'HIGH',\n          detected_at: outStep,\n          position:    actualFlow.indexOf(outStep) + 1\n        });\n      }\n    }\n  }\n\n  // ── 5. Skipped non-critical standard steps ────────────────────────────────\n  // Only flag when order has completed at least half the expected standard steps\n  const completedStandardCount = standardFlow.filter(s => actualFlow.includes(s)).length;\n  if (standardFlow.length > 0 && completedStandardCount >= Math.ceil(standardFlow.length / 2)) {\n    for (const step of standardFlow) {\n      if (!criticalSteps.includes(step) && !actualFlow.includes(step)) {\n        if (!deviations.find(d => d.step === step)) {\n          deviations.push({\n            Type:        'SKIPPED_STEP',\n            step:        step,\n            severity:    'LOW',\n            detected_at: 'END_OF_PROCESS',\n            position:    standardFlow.indexOf(step) + 1\n          });\n        }\n      }\n    }\n  }\n\n  // ── Compute risk scores ───────────────────────────────────────────────────\n  const critCount = deviations.filter(d => d.severity === 'CRITICAL').length;\n  const highCount = deviations.filter(d => d.severity === 'HIGH').length;\n  const medCount  = deviations.filter(d => d.severity === 'MEDIUM').length;\n  const lowCount  = deviations.filter(d => d.severity === 'LOW').length;\n\n  const riskScore = (critCount * 20) + (highCount * 10) + (medCount * 5) + (lowCount * 2);\n  const riskLevel = critCount > 0 ? 'CRITICAL'\n    : highCount > 0 ? 'HIGH'\n    : medCount  > 0 ? 'MEDIUM'\n    : lowCount  > 0 ? 'LOW'\n    : 'LOW';\n  const processStatus = blocked           ? 'BLOCKED'\n    : deviations.length > 0 ? 'ALERT'\n    : 'PASS';\n\n  return {\n    json: {\n      ...order,\n      Deviations_Array:  deviations,\n      Deviation_Count:   deviations.length,\n      Deviation_Types:   [...new Set(deviations.map(d => d.Type))].join(', ') || 'None',\n      Deviation_Counts:  { CRITICAL: critCount, HIGH: highCount, MEDIUM: medCount, LOW: lowCount },\n      Risk_Score:        riskScore,\n      Risk_Level:        riskLevel,\n      Process_Status:    processStatus,\n      Status_Label:      processStatus === 'BLOCKED' ? 'Process Blocked'\n                       : processStatus === 'ALERT'   ? 'Alert - Review Required'\n                       : 'Compliant',\n      Blocked:           blocked,\n      Block_Reason:      blockReason,\n      Block_Step:        blockStep,\n      Total_Deviations:  deviations.length\n    }\n  };\n});"
+      },
+      "name": "Deviation Engine3",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-3232, 3168],
+      "id": "68b46c7f-fad2-483e-9725-1b9fe9288298"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Only send BLOCKED/ALERT orders to AI RCA — PASS orders don't need it\nreturn $input.all().filter(item => {\n  const status         = item.json.Process_Status;\n  const deviationCount = item.json.Total_Deviations || 0;\n  return status === 'BLOCKED' || status === 'ALERT' || deviationCount > 0;\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-3008, 3168],
+      "id": "94764206-7a12-4025-ab01-630fd916cb67",
+      "name": "Filter Deviations1"
+    },
+    {
+      "parameters": {
+        "maxItems": 50
+      },
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [-2784, 3168],
+      "id": "ad527d0e-6039-43cb-ba73-f1ff1f6334a4",
+      "name": "Limit1"
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "prompt": {
+          "messages": [
+            {
+              "content": "=You are an SAP procurement process mining expert.\n\nAnalyze this purchase order deviation and provide a root cause analysis.\n\nOrder: {{ $json.Order_Number }}\nActual Flow: {{ ($json.Actual_Flow || []).join(\" → \") }}\nDeviations: {{ $json.Deviation_Types }}\nDeviation Details: {{ JSON.stringify($json.Deviations_Array || []) }}\n\nYou MUST return a JSON object even if deviations seem minor. Never return empty strings.\n\nReturn JSON only, no markdown:\n{\n  \"Order_Number\": \"{{ $json.Order_Number }}\",\n  \"root_cause\": \"one sentence explaining why this deviation occurred\",\n  \"business_risk\": \"one sentence on the business impact\",\n  \"recommendation\": \"one sentence on how to prevent this\"\n}"
+            }
+          ]
+        },
+        "options": {},
+        "requestOptions": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 2000
+            }
+          }
+        }
+      },
+      "name": "AI RCA+Fix generator1",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [-2576, 3168],
+      "id": "f7500aa9-15aa-4492-b6bf-59bdd7742861",
+      "executeOnce": false,
+      "credentials": {
+        "openAiApi": {
+          "id": "RZO3xCLRL7MMvVFj",
+          "name": "OpenAI Omar"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const originalItems = $items(\"Limit1\");\nconst originalMap = {};\nfor (const orig of originalItems) {\n  const key = orig.json.Order_Number;\n  if (key) originalMap[key] = orig.json;\n}\n\n// Build AI results map keyed by Order_Number from INSIDE the AI response\nconst aiMap = {};\n$input.all().forEach((item) => {\n  try {\n    const msg =\n      item.json.message?.content ||\n      item.json.choices?.[0]?.message?.content ||\n      \"\";\n\n    const match = msg.match(/\\{[\\s\\S]*\\}/);\n    if (match) {\n      let cleaned = match[0]\n        .replace(/\\/\\/.*$/gm, \"\")\n        .replace(/,\\s*}/g, \"}\")\n        .replace(/,\\s*]/g, \"]\")\n        .replace(/'/g, '\"')\n        .replace(/\\n/g, \" \");\n      const parsed = JSON.parse(cleaned);\n\n      // Use Order_Number from inside the AI response — reliable even with batching\n      const orderNum = parsed.Order_Number || item.json.Order_Number;\n      if (orderNum && (parsed.root_cause || parsed.business_risk)) {\n        aiMap[orderNum] = parsed;\n      }\n    }\n  } catch (e) {}\n});\n\n// Return ALL original Limit1 items with AI data merged in where available\nreturn originalItems.map((orig) => {\n  const orderNum = orig.json.Order_Number;\n  const ai = aiMap[orderNum] || {};\n  return {\n    json: {\n      ...orig.json,\n      root_cause:     ai.root_cause     || \"\",\n      business_risk:  ai.business_risk  || \"\",\n      recommendation: ai.recommendation || \"\"\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-2352, 3168],
+      "id": "0f75b741-a050-4226-bbaf-83f452e76ca4",
+      "name": "Parse AI RCA1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// RCA lookup from the AI-processed orders\nconst rcaMap = {};\n$input.all().forEach(item => {\n  if (item.json.Order_Number) rcaMap[item.json.Order_Number] = {\n    root_cause:     item.json.root_cause     || '',\n    business_risk:  item.json.business_risk  || '',\n    recommendation: item.json.recommendation || ''\n  };\n});\n\n// ALL orders from Deviation Engine (includes PASS orders)\nconst allOrders = $items('Deviation Engine3').map(i => i.json);\n\nreturn allOrders.map((json, index) => {\n  const rca        = rcaMap[json.Order_Number] || {};\n  const deviations = json.Deviations_Array || [];\n  const dc         = json.Deviation_Counts || {};\n  const devCounts  = (dc.CRITICAL || dc.HIGH || dc.MEDIUM || dc.LOW) ? dc : {\n    CRITICAL: deviations.filter(d => d.severity === 'CRITICAL').length,\n    HIGH:     deviations.filter(d => d.severity === 'HIGH').length,\n    MEDIUM:   deviations.filter(d => d.severity === 'MEDIUM').length,\n    LOW:      deviations.filter(d => d.severity === 'LOW').length\n  };\n\n  const actualFlow    = json.Actual_Flow    || [];\n  const standardFlow  = json.Standard_Flow  || [];\n  const criticalSteps = json.Critical_Steps || [];\n  const activities    = json.activities     || [];\n  const dates         = activities.map(a => a.Eventtime).filter(Boolean).sort();\n  const orderDate     = dates[0] ? dates[0].substring(0, 10) : '';\n\n  const timeline = actualFlow.map((step, i) => ({\n    step_number: i + 1,\n    step_name:   step,\n    decision: (json.Block_Step && step === json.Block_Step) ? 'BLOCK' : 'ALLOW',\n    reason:   (json.Block_Step && step === json.Block_Step) ? json.Block_Reason : ''\n  }));\n\n  return {\n    json: {\n      Order_Number:           json.Order_Number || `ORD-${1000 + index}`,\n      Customer:               '',\n      Order_Date:             orderDate,\n      Process_Status:         json.Process_Status  || 'PASS',\n      Risk_Level:             json.Risk_Level       || 'LOW',\n      Risk_Score:             json.Risk_Score       || 0,\n      Status_Label:           json.Status_Label     || 'Compliant',\n      Total_Steps:            actualFlow.length,\n      Completed_Steps:        actualFlow.length,\n      Deviation_Count:        deviations.length,\n      Deviation_Types:        json.Deviation_Types  || 'None',\n      Deviations_Array:       deviations,\n      Deviation_Counts:       devCounts,\n      Missing_Critical_Steps: [],\n      Blocked:                json.Blocked      || false,\n      Block_Reason:           json.Block_Reason || '',\n      Block_Step:             json.Block_Step   || '',\n      Block_Position:         json.Block_Step ? actualFlow.indexOf(json.Block_Step) + 1 : -1,\n      Actual_Flow:            actualFlow,\n      Standard_Flow:          standardFlow,\n      Critical_Steps:         criticalSteps,\n      Step_By_Step_Timeline:  timeline,\n      root_cause:             rca.root_cause     || '',\n      business_risk:          rca.business_risk  || '',\n      recommendation:         rca.recommendation || ''\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-2208, 3168],
+      "id": "e3b6a9f5-495a-4f2c-a67e-7090b22f17f8",
+      "name": "Format Final Output1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const all = $input.all().map(i => i.json);\n\nreturn [{\n  json: {\n    status: \"success\",\n    totalOrders: all.length,\n    heatmap: {\n      CRITICAL: all.filter(o => o.Risk_Level === \"CRITICAL\").length,\n      HIGH:     all.filter(o => o.Risk_Level === \"HIGH\").length,\n      MEDIUM:   all.filter(o => o.Risk_Level === \"MEDIUM\").length,\n      LOW:      all.filter(o => o.Risk_Level === \"LOW\").length\n    },\n    statusSummary: {\n      BLOCKED: all.filter(o => o.Process_Status === \"BLOCKED\").length,\n      ALERT:   all.filter(o => o.Process_Status === \"ALERT\").length,\n      PASS:    all.filter(o => o.Process_Status === \"PASS\").length\n    },\n    insights: all\n      .filter(o => o.Process_Status !== \"PASS\")\n      .sort((a, b) => (b.Risk_Score || 0) - (a.Risk_Score || 0))\n      .slice(0, 10),\n    orders: all\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1488, 3168],
+      "id": "dead200f-8134-4116-817d-9aa75500ef7a",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              },
+              {
+                "name": "Access-Control-Allow-Methods",
+                "value": "POST, GET, OPTIONS"
+              },
+              {
+                "name": "Access-Control-Allow-Headers",
+                "value": "Content-Type"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [-1328, 3168],
+      "id": "e99d8fde-8b2d-4d9b-9e5a-6c6c28c2c6b5",
+      "name": "Return Audit Excel3"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "03a2d5d3-df24-49a7-a802-4c41f9002466",
+              "leftValue": "={{$json.Process_Status}}",
+              "rightValue": "BLOCKED",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [-1984, 3168],
+      "id": "b72270cb-33be-44ec-b633-8bce92b7b10e",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "maxItems": 15
+      },
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [-1760, 3024],
+      "id": "a7c7c14f-2654-433f-8045-b544b3e4b7f8",
+      "name": "Limit2"
+    },
+    {
+      "parameters": {
+        "fromEmail": "pam@ofiservices.com",
+        "toEmail": "leo.stroman74@ethereal.email",
+        "subject": "🚨 Critical Process Deviation Detected",
+        "html": "=<div style=\"font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 14px; color: #1a1a1a; max-width: 680px; margin: auto; background: #ffffff;\">\n\n  <!-- HEADER STRIP -->\n  <div style=\"background: #0a1628; padding: 24px 32px; display: flex; align-items: center;\">\n    <div>\n      <div style=\"font-size: 11px; font-weight: 700; letter-spacing: 0.12em; color: #7a9cc4; text-transform: uppercase; margin-bottom: 4px;\">OFI Services · PAM System</div>\n      <div style=\"font-size: 20px; font-weight: 700; color: #ffffff; line-height: 1.2;\">Procurement Process Alert</div>\n    </div>\n    <div style=\"margin-left: auto; background: #c0392b; color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; padding: 5px 12px; border-radius: 3px; text-transform: uppercase; white-space: nowrap;\">\n      Action Required\n    </div>\n  </div>\n\n  <!-- SEVERITY BAR -->\n  <div style=\"height: 4px; background: linear-gradient(90deg, #c0392b 0%, #e74c3c 60%, #f39c12 100%);\"></div>\n\n  <!-- INTRO -->\n  <div style=\"padding: 28px 32px 0;\">\n    <p style=\"margin: 0 0 6px; color: #444; font-size: 14px; line-height: 1.7;\">\n      A <strong style=\"color: #c0392b;\">blocked process deviation</strong> has been flagged on purchase order\n      <strong>{{$json.Order_Number}}</strong> during automated compliance monitoring.\n      The order cannot proceed until this is reviewed.\n    </p>\n    <p style=\"margin: 12px 0 0; font-size: 13px; color: #777; line-height: 1.6;\">\n      Detected: <strong style=\"color: #333;\">{{$json.Order_Date || 'See system log'}}</strong>\n      &nbsp;·&nbsp;\n      Risk tier: <strong style=\"color: #c0392b;\">{{$json.Risk_Level}}</strong>\n      &nbsp;·&nbsp;\n      Risk score: <strong style=\"color: #333;\">{{$json.Risk_Score}}</strong>\n    </p>\n  </div>\n\n  <!-- DIVIDER -->\n  <div style=\"margin: 24px 32px 0; border-top: 1px solid #e8e8e8;\"></div>\n\n  <!-- ORDER SNAPSHOT -->\n  <div style=\"padding: 20px 32px 0;\">\n    <div style=\"font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #999; margin-bottom: 14px;\">Order Snapshot</div>\n    <table style=\"width: 100%; border-collapse: collapse; font-size: 13.5px;\">\n      <tr>\n        <td style=\"padding: 9px 16px 9px 0; color: #666; width: 38%; vertical-align: top;\">Order Number</td>\n        <td style=\"padding: 9px 0; color: #111; font-weight: 600;\">{{$json.Order_Number}}</td>\n      </tr>\n      <tr style=\"border-top: 1px solid #f0f0f0;\">\n        <td style=\"padding: 9px 16px 9px 0; color: #666; vertical-align: top;\">Process Status</td>\n        <td style=\"padding: 9px 0;\">\n          <span style=\"background: #fdecea; color: #c0392b; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 3px; letter-spacing: 0.05em;\">{{$json.Process_Status}}</span>\n        </td>\n      </tr>\n      <tr style=\"border-top: 1px solid #f0f0f0;\">\n        <td style=\"padding: 9px 16px 9px 0; color: #666; vertical-align: top;\">Step Where Blocked</td>\n        <td style=\"padding: 9px 0; color: #111; font-family: 'Courier New', monospace; font-size: 12.5px; font-weight: 600;\">{{$json.Block_Step}}</td>\n      </tr>\n      <tr style=\"border-top: 1px solid #f0f0f0;\">\n        <td style=\"padding: 9px 16px 9px 0; color: #666; vertical-align: top;\">Total Deviations</td>\n        <td style=\"padding: 9px 0; color: #111; font-weight: 600;\">{{$json.Deviation_Count}} detected</td>\n      </tr>\n    </table>\n  </div>\n\n  <!-- DIVIDER -->\n  <div style=\"margin: 20px 32px 0; border-top: 1px solid #e8e8e8;\"></div>\n\n  <!-- WHAT WENT WRONG -->\n  <div style=\"padding: 20px 32px 0;\">\n    <div style=\"font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #999; margin-bottom: 14px;\">What Was Detected</div>\n    <div style=\"background: #fafafa; border: 1px solid #f0f0f0; border-left: 3px solid #c0392b; padding: 14px 18px; border-radius: 0 4px 4px 0;\">\n      <div style=\"font-size: 13px; color: #c0392b; font-weight: 700; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em;\">Block Reason</div>\n      <div style=\"font-size: 14px; color: #222; line-height: 1.6;\">{{$json.Block_Reason}}</div>\n    </div>\n    <div style=\"margin-top: 12px; font-size: 13px; color: #555; line-height: 1.6;\">\n      <strong style=\"color: #333;\">Deviation types flagged:</strong>\n      <span style=\"font-family: 'Courier New', monospace; font-size: 12px; color: #444;\">{{$json.Deviation_Types}}</span>\n    </div>\n  </div>\n\n  <!-- DIVIDER -->\n  <div style=\"margin: 20px 32px 0; border-top: 1px solid #e8e8e8;\"></div>\n\n  <!-- AI ROOT CAUSE -->\n  <div style=\"padding: 20px 32px 0;\">\n    <div style=\"font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #999; margin-bottom: 14px;\">AI Analysis Summary</div>\n    <table style=\"width: 100%; border-collapse: collapse; font-size: 13.5px;\">\n      <tr>\n        <td style=\"padding: 9px 16px 9px 0; color: #666; width: 38%; vertical-align: top;\">Root Cause</td>\n        <td style=\"padding: 9px 0; color: #333; line-height: 1.6;\">{{$json.root_cause || '—'}}</td>\n      </tr>\n      <tr style=\"border-top: 1px solid #f0f0f0;\">\n        <td style=\"padding: 9px 16px 9px 0; color: #666; vertical-align: top;\">Business Risk</td>\n        <td style=\"padding: 9px 0; color: #333; line-height: 1.6;\">{{$json.business_risk || '—'}}</td>\n      </tr>\n      <tr style=\"border-top: 1px solid #f0f0f0;\">\n        <td style=\"padding: 9px 16px 9px 0; color: #666; vertical-align: top;\">Recommendation</td>\n        <td style=\"padding: 9px 0; color: #333; line-height: 1.6; font-weight: 500;\">{{$json.recommendation || '—'}}</td>\n      </tr>\n    </table>\n  </div>\n\n  <!-- DIVIDER -->\n  <div style=\"margin: 20px 32px 0; border-top: 1px solid #e8e8e8;\"></div>\n\n  <!-- ACTUAL FLOW TRAIL -->\n  <div style=\"padding: 20px 32px 0;\">\n    <div style=\"font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #999; margin-bottom: 14px;\">Process Trail (Actual Steps Recorded)</div>\n    <div style=\"font-family: 'Courier New', monospace; font-size: 12px; color: #555; line-height: 2; background: #fafafa; border: 1px solid #efefef; padding: 14px 18px; border-radius: 4px; word-break: break-word;\">\n      {{ ($json.Actual_Flow || []).join('  →  ') }}\n    </div>\n  </div>\n\n  <!-- SIGN-OFF -->\n  <div style=\"padding: 28px 32px 20px;\">\n    <p style=\"margin: 0 0 4px; font-size: 14px; color: #444;\">Please review this order at your earliest convenience and take corrective action where required.</p>\n    <p style=\"margin: 16px 0 2px; font-size: 14px; color: #222;\">Regards,</p>\n    <p style=\"margin: 0; font-size: 14px; color: #222; font-weight: 600;\">Process Adherence Monitoring</p>\n    <p style=\"margin: 2px 0 0; font-size: 12px; color: #999;\">Automated Compliance Intelligence · OFI Services</p>\n  </div>\n\n  <!-- FOOTER -->\n  <div style=\"background: #f5f5f5; border-top: 1px solid #e8e8e8; padding: 12px 32px; font-size: 11px; color: #aaa; text-align: center;\">\n    This message was generated automatically. Do not reply to this email.\n    &nbsp;·&nbsp; OFI Services Internal Use Only\n  </div>\n\n</div>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [-1536, 3024],
+      "id": "7327880b-9a12-475c-b17a-2045e6170090",
+      "name": "Vendor Alert",
+      "webhookId": "cb5055eb-87f0-4953-8aea-0c173a8bacc0",
+      "credentials": {
+        "smtp": {
+          "id": "3Ak9k1L0ojOjYPXc",
+          "name": "PAM"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook: Upload Files3": {
+      "main": [
+        [{ "node": "Extract Uploaded Files3", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Uploaded Files3": {
+      "main": [
+        [
+          { "node": "Parse Table A (Excel/CSV)3", "type": "main", "index": 0 },
+          { "node": "Parse Table B (Excel/CSV)3", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Parse Table A (Excel/CSV)3": {
+      "main": [
+        [{ "node": "Merge Table A + B3", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Table B (Excel/CSV)3": {
+      "main": [
+        [{ "node": "Merge Table A + B3", "type": "main", "index": 1 }]
+      ]
+    },
+    "Merge Table A + B3": {
+      "main": [
+        [{ "node": "Group by Order1", "type": "main", "index": 0 }]
+      ]
+    },
+    "Group by Order1": {
+      "main": [
+        [{ "node": "Build Actual Flow1", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Actual Flow1": {
+      "main": [
+        [{ "node": "Cleaning2", "type": "main", "index": 0 }]
+      ]
+    },
+    "Cleaning2": {
+      "main": [
+        [{ "node": "AI Defines Standard3", "type": "main", "index": 0 }]
+      ]
+    },
+    "AI Defines Standard3": {
+      "main": [
+        [{ "node": "Parse AI Standard3", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse AI Standard3": {
+      "main": [
+        [{ "node": "Deviation Engine3", "type": "main", "index": 0 }]
+      ]
+    },
+    "Deviation Engine3": {
+      "main": [
+        [{ "node": "Filter Deviations1", "type": "main", "index": 0 }]
+      ]
+    },
+    "Filter Deviations1": {
+      "main": [
+        [{ "node": "Limit1", "type": "main", "index": 0 }]
+      ]
+    },
+    "Limit1": {
+      "main": [
+        [{ "node": "AI RCA+Fix generator1", "type": "main", "index": 0 }]
+      ]
+    },
+    "AI RCA+Fix generator1": {
+      "main": [
+        [{ "node": "Parse AI RCA1", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse AI RCA1": {
+      "main": [
+        [{ "node": "Format Final Output1", "type": "main", "index": 0 }]
+      ]
+    },
+    "Format Final Output1": {
+      "main": [
+        [
+          { "node": "Code in JavaScript", "type": "main", "index": 0 },
+          { "node": "If", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [{ "node": "Return Audit Excel3", "type": "main", "index": 0 }]
+      ]
+    },
+    "If": {
+      "main": [
+        [{ "node": "Limit2", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Limit2": {
+      "main": [
+        [{ "node": "Vendor Alert", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "a7798eb8a11b46723b0f7361228b70e813a43cda82941bedb1a0cda2a6e7dcee"
+  }
+}

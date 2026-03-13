@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>PCA — Process Compliance Agent</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <!-- App styles -->
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- ════════════ SIDEBAR ════════════ -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-mark">PCA</div>
+      <div class="logo-sub">Process Compliance Agent</div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section">Analytics</div>
+
+      <div class="nav-item active" data-page="dashboard" onclick="showPage('dashboard')">
+        <span class="icon">◈</span> Dashboard
+      </div>
+
+      <div class="nav-item" data-page="orders" onclick="showPage('orders')">
+        <span class="icon">◻</span> Orders
+      </div>
+
+      <div class="nav-section">System</div>
+
+      <div class="nav-item" data-page="upload" onclick="showPage('upload')">
+        <span class="icon">↑</span> Upload Data
+      </div>
+    </nav>
+
+    <div class="sidebar-bottom">
+      <button class="upload-btn" onclick="showPage('upload')">⊕ New Analysis</button>
+    </div>
+  </aside>
+
+  <!-- ════════════ MAIN ════════════ -->
+  <div class="main">
+
+    <!-- TOPBAR -->
+    <div class="topbar">
+      <div>
+        <div class="topbar-title" id="topbar-title">Process Compliance Dashboard</div>
+        <div class="topbar-sub">Procurement workflow monitoring · OFI Services</div>
+      </div>
+      <div class="topbar-right">
+        <div class="badge-live"><span class="dot-live"></span> Live</div>
+        <button class="send-alert-btn" id="send-alert-btn" style="display:none" onclick="openAlertModal()">
+          ⚠ Send High Risk Alerts
+        </button>
+      </div>
+    </div>
+
+    <!-- ══════════ PAGE: DASHBOARD ══════════ -->
+    <div class="page active" id="page-dashboard">
+
+      <!-- KPI row -->
+      <div class="kpi-row">
+        <div class="kpi n">
+          <div class="kpi-label">Total Orders</div>
+          <div class="kpi-val n" id="kpi-total">—</div>
+          <div class="kpi-delta">analysed</div>
+        </div>
+        <div class="kpi c">
+          <div class="kpi-label">Adherence Rate</div>
+          <div class="kpi-val c" id="kpi-adherence">—</div>
+          <div class="kpi-delta">compliant orders</div>
+        </div>
+        <div class="kpi h">
+          <div class="kpi-label">Avg Deviations</div>
+          <div class="kpi-val h" id="kpi-avg-dev">—</div>
+          <div class="kpi-delta">per order</div>
+        </div>
+        <div class="kpi m">
+          <div class="kpi-label">Throughput</div>
+          <div class="kpi-val m" id="kpi-throughput">—</div>
+          <div class="kpi-delta">orders / batch</div>
+        </div>
+        <div class="kpi l">
+          <div class="kpi-label">Non-Compliant</div>
+          <div class="kpi-val l" id="kpi-critical-rate">—</div>
+          <div class="kpi-delta">blocked + alert</div>
+        </div>
+      </div>
+
+      <!-- Status summary cards -->
+      <div class="status-row">
+        <div class="status-card">
+          <div class="status-icon blocked">🚫</div>
+          <div>
+            <div class="status-num blocked" id="s-blocked">—</div>
+            <div class="status-label">Orders Blocked</div>
+          </div>
+        </div>
+        <div class="status-card">
+          <div class="status-icon alert">⚠</div>
+          <div>
+            <div class="status-num alert" id="s-alert">—</div>
+            <div class="status-label">Under Alert</div>
+          </div>
+        </div>
+        <div class="status-card">
+          <div class="status-icon pass">✓</div>
+          <div>
+            <div class="status-num pass" id="s-pass">—</div>
+            <div class="status-label">Compliant</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Charts row -->
+      <div class="charts-row">
+        <div class="chart-card">
+          <div class="chart-title">Deviation Type Breakdown</div>
+          <div style="position:relative;height:200px"><canvas id="chart-dev-types"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Risk Distribution</div>
+          <div style="position:relative;height:200px"><canvas id="chart-risk"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Risk Heatmap</div>
+          <div class="heatmap-grid">
+            <div class="heatmap-cell critical">
+              <div class="heatmap-num" id="hm-critical">—</div>
+              <div class="heatmap-lbl">Critical</div>
+            </div>
+            <div class="heatmap-cell high">
+              <div class="heatmap-num" id="hm-high">—</div>
+              <div class="heatmap-lbl">High</div>
+            </div>
+            <div class="heatmap-cell medium">
+              <div class="heatmap-num" id="hm-medium">—</div>
+              <div class="heatmap-lbl">Medium</div>
+            </div>
+            <div class="heatmap-cell low">
+              <div class="heatmap-num" id="hm-low">—</div>
+              <div class="heatmap-lbl">Low</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Order Risk Heatmap -->
+      <div class="table-card" id="order-heatmap-card" style="display:none">
+        <div class="table-top">
+          <span class="section-title">Order Risk Overview</span>
+          <span class="section-count" id="heatmap-order-count"></span>
+        </div>
+        <div id="order-heatmap-body" class="order-heatmap-body"></div>
+      </div>
+
+      <!-- Standard Flow Sequential Filter -->
+      <div class="table-card" id="flow-filter-card" style="display:none">
+        <div class="table-top">
+          <span class="section-title">Standard Process Flow</span>
+          <div class="flow-filter-meta">
+            <span class="flow-filter-hint" id="flow-filter-hint">Click steps to build a sequence filter — orders must follow steps <em>in order</em></span>
+            <div class="flow-filter-actions">
+              <span class="flow-match-badge" id="flow-match-badge" style="display:none"></span>
+              <button onclick="clearFlowFilter()" id="flow-clear-btn" style="display:none">✕ Clear</button>
+            </div>
+          </div>
+        </div>
+        <!-- Selected sequence display -->
+        <div class="flow-selected-sequence" id="flow-selected-sequence" style="display:none">
+          <span class="fss-label">Filtering for sequence:</span>
+          <div class="fss-steps" id="fss-steps"></div>
+        </div>
+        <div class="flow-bubbles" id="flow-bubbles"></div>
+      </div>
+
+      <!-- Top 5 Sequences -->
+      <div class="table-card" id="top-sequences-card" style="display:none">
+        <div class="table-top">
+          <span class="section-title">Top 5 Most Followed Sequences</span>
+          <span class="section-count" id="seq-count"></span>
+        </div>
+        <div id="top-sequences-list"></div>
+      </div>
+
+      <!-- Top risk orders table -->
+      <div class="table-card">
+        <div class="table-top">
+          <span class="section-title">Top Risk Orders</span>
+          <span class="section-count" id="insights-count">Top 10</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Order #</th>
+              <th>Status</th>
+              <th>Risk</th>
+              <th>Deviations</th>
+              <th>Root Cause (AI)</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="insights-tbody"></tbody>
+        </table>
+      </div>
+
+    </div><!-- /page-dashboard -->
+
+
+    <!-- ══════════ PAGE: ORDERS ══════════ -->
+    <div class="page" id="page-orders">
+
+      <!-- Filters -->
+      <div class="filters">
+        <div class="filter-group">
+          <div class="filter-chip active" onclick="filterOrders('ALL',this)">All</div>
+          <div class="filter-chip" onclick="filterOrders('BLOCKED',this)">Blocked</div>
+          <div class="filter-chip" onclick="filterOrders('ALERT',this)">Alert</div>
+          <div class="filter-chip" onclick="filterOrders('PASS',this)">Pass</div>
+        </div>
+        <div class="filter-group">
+          <div class="filter-chip" onclick="filterRisk('CRITICAL',this)">Critical</div>
+          <div class="filter-chip" onclick="filterRisk('HIGH',this)">High</div>
+          <div class="filter-chip" onclick="filterRisk('MEDIUM',this)">Medium</div>
+          <div class="filter-chip" onclick="filterRisk('LOW',this)">Low</div>
+        </div>
+        <div class="date-filter">
+          <input type="date" id="date-from" onchange="renderOrdersTable()" title="From date">
+          <span class="date-filter-sep">→</span>
+          <input type="date" id="date-to" onchange="renderOrdersTable()" title="To date">
+          <button class="date-clear-btn" onclick="clearDateFilter()">✕ Date</button>
+        </div>
+        <div class="search-box">
+          <input type="text" id="order-search" placeholder="Search order or customer…" oninput="renderOrdersTable()">
+        </div>
+      </div>
+
+      <div class="table-card">
+        <div class="table-top">
+          <span class="section-title">All Orders</span>
+          <span class="section-count" id="orders-count">0 orders</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Order #</th>
+              <th>Order Date</th>
+              <th>Status</th>
+              <th>Risk Level</th>
+              <th>Steps</th>
+              <th>Deviations</th>
+              <th>Deviation Types</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody id="orders-tbody"></tbody>
+        </table>
+      </div>
+
+    </div><!-- /page-orders -->
+
+
+    <!-- ══════════ PAGE: DETAIL ══════════ -->
+    <div class="page" id="page-detail">
+      <button class="back-btn" onclick="showPage('orders')">← Back to Orders</button>
+      <div id="detail-content"></div>
+    </div>
+
+
+    <!-- ══════════ PAGE: UPLOAD ══════════ -->
+    <div class="page" id="page-upload">
+      <div class="upload-outer">
+
+        <div class="detail-card">
+          <div class="detail-card-title">Upload Event Log &amp; Master Data</div>
+          <p style="font-size:13px;color:var(--text2);line-height:1.6">
+            Upload your two CSV files — the event log (Table A) and the master data (Table B) — then click Run.
+            The n8n backend will process them end-to-end and return the full audit report.
+          </p>
+
+          <div class="file-slots">
+            <div class="file-slot">
+              <div class="file-slot-label">Table A — Event Log</div>
+              <label class="file-slot-drop">
+                <input type="file" id="file-a" accept=".csv,.xlsx" onchange="onFileA(this)">
+                <div style="font-size:28px;margin-bottom:8px">📋</div>
+                <div style="font-size:12px;color:var(--text2)">Accepts .csv or .xlsx</div>
+                <div style="font-size:11px;color:var(--text2);margin-top:3px">Click to browse</div>
+                <div class="file-name" id="file-a-name"></div>
+              </label>
+            </div>
+            <div class="file-slot">
+              <div class="file-slot-label">Table B — Master Data</div>
+              <label class="file-slot-drop">
+                <input type="file" id="file-b" accept=".csv,.xlsx" onchange="onFileB(this)">
+                <div style="font-size:28px;margin-bottom:8px">🗃</div>
+                <div style="font-size:12px;color:var(--text2)">Accepts .csv or .xlsx</div>
+                <div style="font-size:11px;color:var(--text2);margin-top:3px">Click to browse</div>
+                <div class="file-name" id="file-b-name"></div>
+              </label>
+            </div>
+          </div>
+
+          <button class="run-btn" id="run-btn" onclick="runAnalysis()" disabled>
+            ▶ Run PCA Analysis
+          </button>
+
+          <div class="progress-wrap" id="progress-wrap">
+            <div class="progress-track">
+              <div class="progress-bar" id="progress-bar"></div>
+            </div>
+            <div class="progress-label" id="progress-label">Initialising…</div>
+          </div>
+        </div>
+
+        <div class="detail-card">
+          <div class="detail-card-title">Load Demo Data</div>
+          <p style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.6">
+            No files yet? Load the built-in demo dataset to explore the full dashboard instantly.
+            Uses realistic SAP P2P procurement data with 40 orders across all risk levels.
+          </p>
+          <button class="demo-btn" onclick="loadDemoData()">⬡ Load Demo Dataset</button>
+        </div>
+
+      </div>
+    </div><!-- /page-upload -->
+
+  </div><!-- /main -->
+</div><!-- /shell -->
+
+
+<!-- ═══════ ALERT MODAL ═══════ -->
+<div class="modal-backdrop" id="alert-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeAlertModal()">✕</button>
+    <div class="modal-title">Send Risk Alerts</div>
+    <div class="modal-sub" id="modal-sub">Select which risk tiers to notify</div>
+
+    <!-- Tier toggles -->
+    <div class="alert-tier-toggles" id="alert-tier-toggles">
+      <label class="tier-toggle CRITICAL">
+        <input type="checkbox" id="tier-CRITICAL" checked onchange="refreshAlertList()">
+        <span class="tier-toggle-label">CRITICAL / BLOCKED</span>
+        <span class="tier-toggle-note">auto-sent by n8n</span>
+        <span class="tier-toggle-count" id="tier-count-CRITICAL">0</span>
+      </label>
+      <label class="tier-toggle HIGH">
+        <input type="checkbox" id="tier-HIGH" checked onchange="refreshAlertList()">
+        <span class="tier-toggle-label">HIGH Risk</span>
+        <span class="tier-toggle-count" id="tier-count-HIGH">0</span>
+      </label>
+      <label class="tier-toggle MEDIUM">
+        <input type="checkbox" id="tier-MEDIUM" checked onchange="refreshAlertList()">
+        <span class="tier-toggle-label">MEDIUM Risk</span>
+        <span class="tier-toggle-count" id="tier-count-MEDIUM">0</span>
+      </label>
+    </div>
+
+    <div class="modal-list" id="modal-list"></div>
+    <button class="modal-send-btn" id="modal-send-btn" onclick="sendAlerts()">
+      📧 Send Alert Emails
+    </button>
+  </div>
+</div>
+
+<!-- ═══════ TOAST ═══════ -->
+<div class="toast" id="toast"></div>
+
+
+<!-- ════════════════ SCRIPTS (order matters) ════════════════ -->
+<script src="js/config.js"></script>
+<script src="js/demo-data.js"></script>
+<script src="js/dashboard.js"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>

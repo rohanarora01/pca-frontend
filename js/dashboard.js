@@ -530,27 +530,49 @@ function renderFlowBubbles(data) {
   if (!standardFlow.length) { card.style.display = 'none'; return; }
   card.style.display = 'block';
 
-  window._pamStandardFlow = standardFlow;
-  window._pamCriticalSteps = criticalSteps;
+  window._pamStandardFlow   = standardFlow;
+  window._pamCriticalSteps  = criticalSteps;
+  window._pamStepDevCounts  = {}; // populated below
 
-  const stepCounts = {};
+  // For each step count: orders with deviations (problem count) AND compliant orders (pass count)
+  const stepDevCounts  = window._pamStepDevCounts;
+  const stepPassCounts = {};
   standardFlow.forEach(function(s) {
-    stepCounts[s] = data.orders.filter(function(o) { return (o.Actual_Flow || []).includes(s); }).length;
+    const sLow = s.toLowerCase();
+    stepDevCounts[s] = data.orders.filter(function(o) {
+      return (o.Deviations_Array || []).some(function(d) {
+        return (d.step        || '').toLowerCase() === sLow ||
+               (d.detected_at || '').toLowerCase() === sLow;
+      }) || (o.Block_Step || '').toLowerCase() === sLow;
+    }).length;
+    stepPassCounts[s] = data.orders.filter(function(o) {
+      return o.Process_Status === 'PASS' &&
+             (o.Actual_Flow || []).some(function(a) { return a.toLowerCase() === sLow; });
+    }).length;
   });
 
   container.innerHTML = standardFlow.map(function(step, i) {
-    const isCrit = criticalSteps.includes(step);
-    const count = stepCounts[step] || 0;
-    const safeStep = step.replace(/'/g, "\\'");
+    const isCrit    = criticalSteps.some(function(c) { return c.toLowerCase() === step.toLowerCase(); });
+    const dc        = stepDevCounts[step]  || 0;
+    const passCount = stepPassCounts[step] || 0;
+    const hasDevs   = dc > 0;
+    const safeStep  = step.replace(/'/g, "\\'");
+    // Badge: ⚠ N for problem steps, ✓ N for clean steps (compliant order count)
+    const badgeClass = hasDevs ? ' dev-count-active' : ' pass-count-badge';
+    const badgeText  = hasDevs ? ('⚠ ' + dc) : ('✓ ' + passCount);
+    const tooltip    = hasDevs
+      ? (isCrit ? '⭑ Critical · ' : '') + dc + ' orders with deviations — click to filter'
+      : passCount + ' compliant orders at this step — click to view';
+    const bubbleClass = 'flow-bubble' + (isCrit ? ' critical-step' : '');
     return (
       '<div class="flow-bubble-wrap">' +
-        '<div class="flow-bubble ' + (isCrit ? 'critical-step' : '') + '"' +
+        '<div class="' + bubbleClass + '"' +
              ' id="bubble-' + i + '"' +
-             ' title="' + (isCrit ? '⭑ Critical · ' : '') + count + ' orders"' +
+             ' title="' + tooltip + '"' +
              ' onclick="selectFlowStep(\'' + safeStep + '\', ' + i + ')">' +
           '<span class="bubble-num">' + (i + 1) + '</span>' +
           ' ' + step + (isCrit ? ' <span class="bubble-crit">⭑</span>' : '') +
-          '<span class="flow-bubble-count">' + count + '</span>' +
+          '<span class="flow-bubble-count' + badgeClass + '">' + badgeText + '</span>' +
         '</div>' +
         (i < standardFlow.length - 1 ? '<div class="flow-bubble-arrow">→</div>' : '') +
       '</div>'
@@ -562,21 +584,12 @@ function renderFlowBubbles(data) {
 }
 
 function selectFlowStep(step, idx) {
-  const flow = window._pamStandardFlow || [];
   const pos = selectedFlowSteps.indexOf(step);
-
   if (pos !== -1) {
-    selectedFlowSteps = selectedFlowSteps.slice(0, pos);
+    selectedFlowSteps.splice(pos, 1); // toggle off
   } else {
-    const lastSelected = selectedFlowSteps[selectedFlowSteps.length - 1];
-    const lastIdx = lastSelected ? flow.indexOf(lastSelected) : -1;
-    if (idx > lastIdx) {
-      selectedFlowSteps.push(step);
-    } else {
-      selectedFlowSteps = [step];
-    }
+    selectedFlowSteps.push(step);     // toggle on
   }
-
   updateFlowFilterUI();
   applyFlowFilter();
 }
@@ -619,9 +632,14 @@ function updateFlowFilterUI() {
   }
 
   if (hint) {
-    hint.innerHTML = hasFilter
-      ? 'Filtering for <strong>' + selectedFlowSteps.length + '</strong> steps in sequence'
-      : 'Click steps in order to build a sequence filter';
+    if (!hasFilter) {
+      hint.innerHTML = '<span style="color:var(--critical)">⚠ N</span> = problem orders at step &nbsp;·&nbsp; <span style="color:var(--pass)">✓ N</span> = compliant orders &nbsp;·&nbsp; click any step to filter';
+    } else {
+      const devSelected  = selectedFlowSteps.filter(function(s) { return (window._pamStepDevCounts[s] || 0) > 0; });
+      hint.innerHTML = devSelected.length > 0
+        ? 'Showing orders with deviations at selected step' + (devSelected.length > 1 ? 's' : '')
+        : 'Showing compliant orders passing through selected step' + (selectedFlowSteps.length > 1 ? 's' : '');
+    }
   }
 }
 
@@ -640,26 +658,43 @@ function applyFlowFilter() {
     return;
   }
 
-  const matched = appData.orders.filter(function(o) {
-    return isSubsequence(selectedFlowSteps, o.Actual_Flow || []);
-  });
+  const devSteps  = selectedFlowSteps.filter(function(s) { return (window._pamStepDevCounts[s] || 0) > 0; });
+  const passSteps = selectedFlowSteps.filter(function(s) { return (window._pamStepDevCounts[s] || 0) === 0; });
+
+  let matched;
+  let filterLabel;
+
+  if (devSteps.length > 0) {
+    // At least one selected step has deviations → show problem orders for those steps
+    matched = appData.orders.filter(function(o) {
+      return devSteps.some(function(step) {
+        const sLow = step.toLowerCase();
+        return (o.Deviations_Array || []).some(function(d) {
+          return (d.step        || '').toLowerCase() === sLow ||
+                 (d.detected_at || '').toLowerCase() === sLow;
+        }) || (o.Block_Step || '').toLowerCase() === sLow;
+      });
+    });
+    filterLabel = matched.length + ' orders with deviations';
+  } else {
+    // All selected steps are clean → show compliant (PASS) orders that went through those steps
+    matched = appData.orders.filter(function(o) {
+      if (o.Process_Status !== 'PASS') return false;
+      return passSteps.every(function(step) {
+        return (o.Actual_Flow || []).some(function(a) { return a.toLowerCase() === step.toLowerCase(); });
+      });
+    });
+    filterLabel = matched.length + ' compliant orders';
+  }
 
   const badge = document.getElementById('flow-match-badge');
   if (badge) {
     badge.style.display = 'inline-block';
-    badge.textContent = matched.length + ' match' + (matched.length !== 1 ? 'es' : '');
+    badge.textContent = matched.length + ' order' + (matched.length !== 1 ? 's' : '');
   }
 
-  set('insights-count', matched.length + ' orders · ' + selectedFlowSteps.length + '-step filter');
+  set('insights-count', filterLabel);
   renderInsightsTable(matched.sort(function(a,b) { return (b.Risk_Score||0) - (a.Risk_Score||0); }));
-}
-
-function isSubsequence(needle, haystack) {
-  let ni = 0;
-  for (let i = 0; i < haystack.length && ni < needle.length; i++) {
-    if (haystack[i] === needle[ni]) ni++;
-  }
-  return ni === needle.length;
 }
 
 function clearFlowFilter() {
